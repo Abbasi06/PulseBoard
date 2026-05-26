@@ -4,12 +4,13 @@ from auth import COOKIE_OPTS, create_access_token, get_current_user_id
 from database import get_db
 from models import User
 from schemas import UserCreate, UserRead, UserUpdate
+from security.rate_limiter import registration_rate_limit
 from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/users", tags=["users"])
 
 
-@router.post("", response_model=UserRead)
+@router.post("", response_model=UserRead, dependencies=[Depends(registration_rate_limit)])
 def create_user(
     payload: UserCreate, response: Response, db: Session = Depends(get_db)
 ) -> User:
@@ -20,6 +21,9 @@ def create_user(
         field=payload.field,
         sub_fields=payload.sub_fields,
         refresh_interval_hours=payload.refresh_interval_hours,
+        taxonomy_tags=payload.taxonomy_tags,
+        excluded_topics=payload.excluded_topics,
+        exploration_mode=payload.exploration_mode,
     )
     db.add(user)
     db.commit()
@@ -73,6 +77,9 @@ def update_user(
     user.sub_fields = payload.sub_fields
     user.preferred_formats = payload.preferred_formats
     user.refresh_interval_hours = payload.refresh_interval_hours
+    user.taxonomy_tags = payload.taxonomy_tags
+    user.excluded_topics = payload.excluded_topics
+    user.exploration_mode = payload.exploration_mode
     db.commit()
     db.refresh(user)
     return user

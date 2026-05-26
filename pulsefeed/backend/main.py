@@ -1,190 +1,132 @@
 """
 PulseFeed — Main Application
 -----------------------------
-User-facing service: auth, profiles, feed, events, briefs.
-Runs on port 8000.
+Local-first AI news feed powered by llama.cpp.
+Runs on port 8000; serves both the API and the built React SPA.
 
-The content pipeline (harvesting, gatekeeper, extractor, trend analysis) lives
-in a SEPARATE process: PulseGen (pulsegen/backend, port 8001).
-This service reads from the shared PostgreSQL database but never writes to generator_documents.
-
-Startup
--------
-    cd pulsefeed/backend
-    uv run uvicorn main:app --reload --port 8000
+Start via bootstrap.py (recommended) or:
+    cd pulsefeed/backend && uv run uvicorn main:app --port 8000
 """
+from __future__ import annotations
+
 import logging
 import os
+import threading
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
 
-import redis.asyncio as aioredis
 import sqlalchemy
-from apscheduler.schedulers.background import BackgroundScheduler
+import sqlalchemy.exc
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
+from logging_config import configure_json_logging
+
+configure_json_logging()
 logger = logging.getLogger(__name__)
 
-# Load .env — service dir first, then repo root as fallback (neither overrides already-set vars)
-_service_env = Path(__file__).parent / ".env"
-_root_env = Path(__file__).parents[2] / ".env"
-load_dotenv(_service_env)
-load_dotenv(_root_env)
+# Load .env — service dir first, repo root as fallback
+load_dotenv(Path(__file__).parent / ".env")
+load_dotenv(Path(__file__).parents[2] / ".env")
 
 from database import Base, engine  # noqa: E402
-from routes import events, feed, feed_v2, users  # noqa: E402
+from routes import events, feed, users  # noqa: E402
+from routes.system import router as system_router  # noqa: E402
 from security import AuditMiddleware, SecurityHeadersMiddleware  # noqa: E402
 
 
 def _run_migrations() -> None:
-    """Apply schema additions that are safe to run on every startup (PostgreSQL)."""
     migrations = [
-        "ALTER TABLE feed_items ADD COLUMN IF NOT EXISTS image_url TEXT NOT NULL DEFAULT ''",
-        "ALTER TABLE feed_items ADD COLUMN IF NOT EXISTS published_date TEXT NOT NULL DEFAULT ''",
-        "ALTER TABLE feed_items ADD COLUMN IF NOT EXISTS liked BOOLEAN NOT NULL DEFAULT FALSE",
-        "ALTER TABLE feed_items ADD COLUMN IF NOT EXISTS disliked BOOLEAN NOT NULL DEFAULT FALSE",
-        "ALTER TABLE feed_items ADD COLUMN IF NOT EXISTS saved BOOLEAN NOT NULL DEFAULT FALSE",
-        "ALTER TABLE feed_items ADD COLUMN IF NOT EXISTS read_count INTEGER NOT NULL DEFAULT 0",
-        "ALTER TABLE events ADD COLUMN IF NOT EXISTS image_url TEXT NOT NULL DEFAULT ''",
-        "ALTER TABLE events ADD COLUMN IF NOT EXISTS liked BOOLEAN NOT NULL DEFAULT FALSE",
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_formats TEXT NOT NULL DEFAULT '[]'",
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS field TEXT NOT NULL DEFAULT ''",
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS sub_fields TEXT NOT NULL DEFAULT '[]'",
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS refresh_interval_hours INTEGER NOT NULL DEFAULT 6",
+        "ALTER TABLE feed_items ADD COLUMN image_url TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE feed_items ADD COLUMN published_date TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE feed_items ADD COLUMN liked BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE feed_items ADD COLUMN disliked BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE feed_items ADD COLUMN saved BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE feed_items ADD COLUMN read_count INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE events ADD COLUMN image_url TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE events ADD COLUMN liked BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN preferred_formats TEXT NOT NULL DEFAULT '[]'",
+        "ALTER TABLE users ADD COLUMN field TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE users ADD COLUMN sub_fields TEXT NOT NULL DEFAULT '[]'",
+        "ALTER TABLE users ADD COLUMN refresh_interval_hours INTEGER NOT NULL DEFAULT 6",
+        "ALTER TABLE users ADD COLUMN taxonomy_tags TEXT NOT NULL DEFAULT '[]'",
+        "ALTER TABLE users ADD COLUMN excluded_topics TEXT NOT NULL DEFAULT '[]'",
+        "ALTER TABLE users ADD COLUMN exploration_mode VARCHAR(20) NOT NULL DEFAULT 'broad'",
         (
             "CREATE TABLE IF NOT EXISTS feed_briefs ("
-            "id SERIAL PRIMARY KEY, "
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
             "user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE, "
             "headline TEXT NOT NULL DEFAULT '', "
             "signals TEXT NOT NULL DEFAULT '[]', "
             "top_reads TEXT NOT NULL DEFAULT '[]', "
             "watch TEXT NOT NULL DEFAULT '[]', "
-            "generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())"
+            "generated_at TEXT NOT NULL DEFAULT (datetime('now')))"
         ),
-        # Performance indexes — safe to re-run (IF NOT EXISTS)
         "CREATE INDEX IF NOT EXISTS idx_feed_items_user_fetched ON feed_items(user_id, fetched_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_events_user_fetched ON events(user_id, fetched_at DESC)",
     ]
     with engine.connect() as conn:
         for sql in migrations:
-            conn.execute(sqlalchemy.text(sql))
-            conn.commit()
+            try:
+                conn.execute(sqlalchemy.text(sql))
+                conn.commit()
+            except sqlalchemy.exc.OperationalError as exc:
+                conn.rollback()
+                if "already has a column named" not in str(exc) and "already exists" not in str(exc):
+                    logger.warning("Migration skipped: %s", exc)
 
 
-def _batch_repersonalize() -> None:
-    """
-    Every 5 minutes: re-personalize feeds for users whose cached feed is stale.
-    Staleness is determined per-user by their refresh_interval_hours setting (3 or 6 hrs).
-    Uses PostgreSQL FTS matching only — no external LLM calls.
-    Skips users if generator pool has no matches.
-    """
-    from datetime import datetime, timedelta, timezone
+def _start_llm_in_background() -> None:
+    """Prepare + load the model in a daemon thread so startup is instant."""
+    def _worker() -> None:
+        try:
+            from llm.model_manager import prepare_model, state
+            from llm.engine import LLMEngine
 
-    from sqlalchemy.orm import Session
+            state["status"] = "checking"
+            config = prepare_model()
 
-    from agents.feed_personalizer import personalize_feed_sync
-    from models import FeedBrief, FeedItem, User
-    from routes.feed import _save_items
+            if state.get("status") == "disabled":
+                LLMEngine.get().load(model_path="", gpu_type="cpu", n_ctx=2048)
+                return
 
-    now = datetime.now(timezone.utc)
-    db = Session(engine)
-    try:
-        users: list[User] = db.query(User).all()  # type: ignore[assignment]
-        stale_user_ids: list[int] = []
-
-        for user in users:
-            ttl_hours = int(getattr(user, "refresh_interval_hours", 6))
-            cutoff = now - timedelta(hours=ttl_hours)
-            latest_at = (
-                db.query(FeedItem.fetched_at)
-                .filter(FeedItem.user_id == user.id)
-                .order_by(FeedItem.fetched_at.desc())  # type: ignore[attr-defined]
-                .limit(1)
-                .scalar()
+            state["status"] = "loading"
+            LLMEngine.get().load(
+                model_path=config["model_path"],
+                gpu_type=config["gpu_type"],
+                n_ctx=config["n_ctx"],
             )
-            if latest_at is None or latest_at.replace(tzinfo=timezone.utc) < cutoff:
-                stale_user_ids.append(user.id)
+            state["status"] = "ready"
+        except Exception as exc:
+            logger.error("LLM startup failed: %s", exc)
+            from llm.model_manager import state
+            state["status"] = "error"
+            state["error"] = str(exc)
 
-        if not stale_user_ids:
-            return
-
-        logger.info("Batch repersonalize: %d stale users", len(stale_user_ids))
-        for user_id in stale_user_ids:
-            items = personalize_feed_sync(user_id)
-            if not items:
-                continue
-            db.query(FeedItem).filter(FeedItem.user_id == user_id).delete()
-            db.query(FeedBrief).filter(FeedBrief.user_id == user_id).delete()
-            _save_items(items, db)
-            logger.info("Batch repersonalized user %d: %d items", user_id, len(items))
-    except Exception as exc:
-        logger.error("Batch repersonalize failed: %s", exc)
-    finally:
-        db.close()
+    t = threading.Thread(target=_worker, daemon=True, name="llm-loader")
+    t.start()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     Base.metadata.create_all(bind=engine)
     _run_migrations()
-
-    if not os.environ.get("LLM_LIGHT_URL"):
-        logger.warning(
-            "LLM_LIGHT_URL is not set — defaulting to http://host.docker.internal:8080/v1; "
-            "ensure llama.cpp light server (gemma3-1b) is running on port 8080"
-        )
-
-    # Redis for rate limiting — fail-open if unavailable
-    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
-    redis_client: Any = None
-    try:
-        redis_client = aioredis.from_url(
-            redis_url,
-            decode_responses=True,
-            socket_connect_timeout=2,
-        )
-        await redis_client.ping()
-        logger.info("Redis connected at %s — rate limiting active", redis_url)
-    except Exception as exc:
-        logger.warning("Redis unavailable (%s) — rate limiting is disabled", exc)
-        redis_client = None
-    app.state.redis = redis_client
-
-    scheduler = BackgroundScheduler(job_defaults={"misfire_grace_time": 60})
-    scheduler.add_job(
-        _batch_repersonalize,
-        "interval",
-        minutes=5,
-        id="feed_repersonalize",
-        max_instances=1,
-    )
-    scheduler.start()
-
+    _start_llm_in_background()
     yield
 
-    if redis_client is not None:
-        await redis_client.aclose()
-    scheduler.shutdown(wait=False)
 
+app = FastAPI(title="PulseFeed", lifespan=lifespan)
 
-app = FastAPI(title="PulseFeed API", lifespan=lifespan)
-
-_ALLOWED_ORIGINS = [
-    # local dev — Vite (5173-5182) + production frontend (3000)
+# CORS — localhost only in dev; set ALLOWED_ORIGIN env var in any server deploy
+_prod_origins = [o.strip() for o in os.environ.get("ALLOWED_ORIGIN", "").split(",") if o.strip()]
+_ALLOWED_ORIGINS = _prod_origins if _prod_origins else [
     "http://localhost:3000",
     *[f"http://localhost:{p}" for p in range(5173, 5183)],
-    # production — set ALLOWED_ORIGIN env var to your domain
-    *([o.strip() for o in os.environ["ALLOWED_ORIGIN"].split(",")]
-      if os.environ.get("ALLOWED_ORIGIN") else []),
 ]
 
-# Middleware stack — registered innermost-first; last add_middleware = outermost.
-# Request flow:  SecurityHeaders → Audit → CORS → Router
-# Response flow: Router → CORS → Audit (log 4xx) → SecurityHeaders (add headers)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ALLOWED_ORIGINS,
@@ -199,9 +141,17 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.include_router(users.router)
 app.include_router(feed.router)
 app.include_router(events.router)
-app.include_router(feed_v2.router)
+app.include_router(system_router)
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "pulsefeed"}
+
+
+# Serve built React SPA — must be last so API routes take priority
+_static_dir = Path(__file__).parents[1] / "frontend" / "dist"
+if _static_dir.exists():
+    app.mount("/", StaticFiles(directory=str(_static_dir), html=True), name="spa")
+else:
+    logger.info("Frontend dist/ not found — run `npm run build` in pulsefeed/frontend")

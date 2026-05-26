@@ -1,24 +1,36 @@
 """
-PostgreSQL database configuration for PulseFeed.
+SQLite database configuration for PulseFeed.
 
-Requires DATABASE_URL environment variable pointing to a PostgreSQL instance.
+Database file lives at ~/.pulsefeed/pulseboard.db so it persists across
+app updates and reinstalls. Override with DATABASE_URL env var if needed.
 """
+from __future__ import annotations
 
 import os
+from pathlib import Path
+
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.orm import declarative_base, sessionmaker
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
-if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL environment variable is required")
+_default_path = Path.home() / ".pulsefeed" / "pulseboard.db"
+_default_path.parent.mkdir(parents=True, exist_ok=True)
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+DATABASE_URL: str = os.environ.get(
+    "DATABASE_URL", f"sqlite:///{_default_path}"
+)
+
+_connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+
+engine = create_engine(
+    DATABASE_URL,
+    connect_args=_connect_args,
+    pool_pre_ping=True,
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
 def get_db():
-    """Dependency for FastAPI routes."""
     db = SessionLocal()
     try:
         yield db

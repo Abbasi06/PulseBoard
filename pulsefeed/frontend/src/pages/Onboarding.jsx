@@ -5,6 +5,11 @@ import { useAuth } from "../context/AuthContext";
 import InterestPicker from "../components/InterestPicker";
 import { MIN_SUBFIELDS } from "../constants/taxonomy";
 import { API_URL } from "../config";
+import {
+  onboardingStep1Schema,
+  onboardingStep2Schema,
+  zodErrorsToMap,
+} from "../lib/validation";
 
 const MAX_NAME = 100;
 const MAX_OCC = 150;
@@ -77,18 +82,20 @@ export default function Onboarding() {
   const [loading, setLoading] = useState(false);
 
   function validateStep1() {
-    const e = {};
-    if (!name.trim()) e.name = "Name is required";
-    if (!occupation.trim()) e.occupation = "Occupation is required";
-    return e;
+    const result = onboardingStep1Schema.safeParse({
+      name,
+      occupation,
+      refresh_interval_hours: refreshInterval,
+    });
+    return result.success ? {} : zodErrorsToMap(result.error.issues);
   }
 
   function validateStep2() {
-    const e = {};
-    if (!field) e.field = "Select a domain first";
-    else if (subFields.length < MIN_SUBFIELDS)
-      e.subFields = `Select at least ${MIN_SUBFIELDS} focus areas`;
-    return e;
+    const result = onboardingStep2Schema.safeParse({
+      field,
+      sub_fields: subFields,
+    });
+    return result.success ? {} : zodErrorsToMap(result.error.issues);
   }
 
   function handleNext() {
@@ -261,7 +268,7 @@ export default function Onboarding() {
                     How often should your feed pull fresh content?
                   </p>
                   <div className="flex gap-3">
-                    {[3, 6].map((hrs) => (
+                    {[3, 6, 12].map((hrs) => (
                       <button
                         key={hrs}
                         type="button"
@@ -279,7 +286,9 @@ export default function Onboarding() {
                   <p className="mt-2 text-[10px] font-mono text-steel uppercase tracking-widest">
                     {refreshInterval === 3
                       ? "[3H] HIGH FREQUENCY — ideal for fast-moving fields"
-                      : "[6H] STANDARD — balanced freshness and efficiency"}
+                      : refreshInterval === 6
+                        ? "[6H] STANDARD — balanced freshness and efficiency"
+                        : "[12H] LOW FREQUENCY — ideal for stable, long-form fields"}
                   </p>
                 </div>
 

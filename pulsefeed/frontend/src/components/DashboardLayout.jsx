@@ -62,24 +62,6 @@ export default function DashboardLayout() {
               />
             </svg>
           </NavLink>
-          <NavLink
-            to="/generator"
-            className={({ isActive }) =>
-              `p-2 rounded-lg transition-colors ${isActive ? "text-neon-cyan" : "text-text-secondary hover:text-text-primary"}`
-            }
-          >
-            <svg
-              className="w-5 h-5"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={1.8}
-              viewBox="0 0 24 24"
-            >
-              <rect x="4" y="4" width="16" height="16" rx="2" />
-              <rect x="9" y="9" width="6" height="6" />
-              <path d="M15 2v2M15 20v2M9 2v2M9 20v2M2 15h2M20 15h2M2 9h2M20 9h2" />
-            </svg>
-          </NavLink>
           <button
             onClick={handleLogout}
             className="p-2 rounded-lg text-text-secondary hover:text-neon-pink transition-colors"
@@ -189,30 +171,6 @@ export default function DashboardLayout() {
                   />
                 </svg>
                 Settings
-              </NavLink>
-              <NavLink
-                to="/generator"
-                onClick={() => setOpen(false)}
-                className={({ isActive }) =>
-                  `flex items-center gap-2.5 px-3.5 py-2.5 text-sm font-medium transition-colors ${
-                    isActive
-                      ? "text-neon-cyan bg-neon-cyan/10"
-                      : "text-text-secondary hover:text-text-primary hover:bg-white/5"
-                  }`
-                }
-              >
-                <svg
-                  className="w-4 h-4 shrink-0"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={1.8}
-                  viewBox="0 0 24 24"
-                >
-                  <rect x="4" y="4" width="16" height="16" rx="2" />
-                  <rect x="9" y="9" width="6" height="6" />
-                  <path d="M15 2v2M15 20v2M9 2v2M9 20v2M2 15h2M20 15h2M2 9h2M20 9h2" />
-                </svg>
-                Generator
               </NavLink>
               <div className="h-px mx-3 bg-deep-purple/20" />
               <button

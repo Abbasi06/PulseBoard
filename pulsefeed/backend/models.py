@@ -21,6 +21,9 @@ class User(Base):
     sub_fields: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     preferred_formats: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     refresh_interval_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=6)
+    taxonomy_tags: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    excluded_topics: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    exploration_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="broad")
 
     feed_items: Mapped[list[FeedItem]] = relationship(
         "FeedItem", back_populates="user", cascade="all, delete-orphan"

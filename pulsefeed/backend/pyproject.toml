@@ -1,42 +1,33 @@
 [project]
 name = "pulsefeed"
-version = "2.0.0"
-description = "PulseFeed — stripped serving API with personalized feed recommendation"
-requires-python = ">=3.13"
+version = "3.0.0"
+description = "PulseFeed — local-first AI news feed powered by llama.cpp"
+requires-python = ">=3.11"
 dependencies = [
-    # FastAPI
-    "fastapi>=0.135.1",
-    "uvicorn>=0.42.0",
+    # Web framework
+    "fastapi>=0.115.0",
+    "uvicorn>=0.34.0",
     # Database + ORM
     "sqlalchemy>=2.0.0",
-    "psycopg2-binary>=2.9.0",
-    "pgvector>=0.3.0",
     # Auth
-    "passlib[bcrypt]>=1.7.4",
     "python-jose[cryptography]>=3.5.0",
-    # Ollama via OpenAI-compatible API
-    "openai>=1.0",
-    # Utilities
+    # Content fetching
+    "duckduckgo-search>=7.0.0",
     "httpx>=0.27",
+    # LLM — CPU baseline; bootstrap.py upgrades to Metal/CUDA wheel if GPU detected
+    "llama-cpp-python>=0.3.0",
+    # Utilities
     "pydantic>=2.7",
     "python-dotenv>=1.0",
-    "redis>=5.0",
     "apscheduler>=3.10.0",
+    "psutil>=6.0.0",
 ]
 
 [tool.mypy]
-python_version = "3.13"
+python_version = "3.11"
 strict = false
 ignore_missing_imports = true
 explicit_package_bases = true
-
-[[tool.mypy.overrides]]
-module = [
-    "psycopg2.*",
-    "pgvector.*",
-    "sqlalchemy.*",
-]
-ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -9,7 +9,6 @@ import LandingPage from "./pages/LandingPage";
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Onboarding = lazy(() => import("./pages/Onboarding"));
 const Settings = lazy(() => import("./pages/Settings"));
-const GeneratorView = lazy(() => import("./pages/GeneratorView"));
 import WarpBackground from "./components/WarpBackground";
 
 // ---------------------------------------------------------------------------
@@ -135,14 +134,6 @@ function Pulse() {
 // Protected route: waits for auth check before deciding
 // ---------------------------------------------------------------------------
 
-function RootRedirect() {
-  const { isAuthenticated, checking } = useAuth();
-  if (checking) return <Pulse />;
-  return (
-    <Navigate to={isAuthenticated ? "/dashboard" : "/onboarding"} replace />
-  );
-}
-
 function ProtectedRoute({ children }) {
   const { isAuthenticated, checking } = useAuth();
   if (checking) return <Pulse />;
@@ -201,14 +192,6 @@ function AppRoutes() {
                 element={
                   <Page variant={fade}>
                     <Settings />
-                  </Page>
-                }
-              />
-              <Route
-                path="/generator"
-                element={
-                  <Page variant={fade}>
-                    <GeneratorView />
                   </Page>
                 }
               />

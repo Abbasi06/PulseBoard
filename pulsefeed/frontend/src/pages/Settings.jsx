@@ -16,63 +16,62 @@ import {
   Palette,
   Rss,
   Shield,
-  LogOut,
-  Save,
 } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "../context/AuthContext";
 import TagInput from "../components/TagInput";
 import { API_URL } from "../config";
+import { settingsSchema, zodErrorsToMap } from "../lib/validation";
 
 const FIELDS = [
-  { id: "AI & Machine Learning", label: "AI & ML", icon: Brain },
-  { id: "Software Engineering", label: "Software Eng.", icon: Code2 },
+  { id: "AI & Machine Learning", label: "AI & Machine Learning", icon: Brain },
+  { id: "Software Engineering", label: "Software Engineering", icon: Code2 },
   { id: "Cybersecurity", label: "Cybersecurity", icon: Shield },
   { id: "Data Science", label: "Data Science", icon: BarChart2 },
   { id: "Cloud & DevOps", label: "Cloud & DevOps", icon: Cloud },
-  { id: "Blockchain & Web3", label: "Blockchain", icon: Link },
+  { id: "Blockchain & Web3", label: "Blockchain & Web3", icon: Link },
   { id: "Product & Design", label: "Product & Design", icon: Palette },
-  { id: "Quantum Computing", label: "Quantum", icon: Atom },
-  { id: "Robotics & Embedded", label: "Robotics", icon: Bot },
+  { id: "Quantum Computing", label: "Quantum Computing", icon: Atom },
+  { id: "Robotics & Embedded", label: "Robotics & Embedded", icon: Bot },
   { id: "Other", label: "Other", icon: HelpCircle },
 ];
 
 const SUB_FIELD_PLACEHOLDER = {
-  "AI & Machine Learning": "e.g. LLMs, Computer Vision, RL…",
-  "Software Engineering": "e.g. Backend, Frontend, APIs…",
-  Cybersecurity: "e.g. Zero Trust, Pen Testing, OSINT…",
-  "Data Science": "e.g. NLP, Time Series, Visualisation…",
+  "AI & Machine Learning":
+    "e.g. LLMs, Computer Vision, Reinforcement Learning…",
+  "Software Engineering": "e.g. Backend, Frontend, Mobile, APIs…",
+  Cybersecurity: "e.g. Zero Trust, Penetration Testing, OSINT…",
+  "Data Science": "e.g. NLP, Time Series, Data Visualisation…",
   "Cloud & DevOps": "e.g. Kubernetes, Terraform, CI/CD…",
-  "Blockchain & Web3": "e.g. DeFi, Smart Contracts, L2…",
-  "Product & Design": "e.g. UX Research, Design Systems…",
-  "Quantum Computing": "e.g. Quantum Algorithms, Qubits…",
-  "Robotics & Embedded": "e.g. ROS, Microcontrollers…",
-  Other: "e.g. specific topics you care about…",
+  "Blockchain & Web3": "e.g. DeFi, Smart Contracts, Layer 2…",
+  "Product & Design": "e.g. UX Research, Design Systems, Prototyping…",
+  "Quantum Computing": "e.g. Quantum Algorithms, Error Correction, Qubits…",
+  "Robotics & Embedded": "e.g. ROS, Microcontrollers, Sensor Fusion…",
+  Other: "e.g. specific topics you're interested in…",
 };
 
 const FORMAT_CARDS = [
   {
     id: "Research Papers",
     label: "Research Papers",
-    desc: "ArXiv · DeepMind · OpenAI",
+    description: "ArXiv · DeepMind · OpenAI",
     icon: FileText,
   },
   {
     id: "Technical Articles",
-    label: "Tech Articles",
-    desc: "Medium · Dev.to · Hashnode",
+    label: "Technical Articles",
+    description: "Medium · Dev.to · Hashnode",
     icon: Newspaper,
   },
   {
     id: "Books & Guides",
     label: "Books & Guides",
-    desc: "O'Reilly · Manning · Roadmaps",
+    description: "O'Reilly · Manning · Roadmap.sh",
     icon: BookOpen,
   },
   {
     id: "Engineering Blogs",
-    label: "Eng. Blogs",
-    desc: "Netflix · Uber · Meta Infra",
+    label: "Engineering Blogs",
+    description: "Netflix · Uber · Meta Infra",
     icon: Rss,
   },
 ];
@@ -80,19 +79,49 @@ const FORMAT_CARDS = [
 const MAX_NAME = 100;
 const MAX_OCC = 150;
 
-function SectionHeader({ label }) {
-  return (
-    <div className="flex items-center gap-3 mb-4">
-      <span className="text-[10px] font-mono font-bold tracking-[0.2em] uppercase text-text-secondary">
-        {label}
-      </span>
-      <div
-        className="flex-1 h-px"
-        style={{ background: "rgba(90,45,160,0.25)" }}
-      />
-    </div>
-  );
-}
+const TAXONOMY_TAGS = [
+  {
+    id: "AI Engineering",
+    label: "AI Engineering",
+    desc: "Inference, serving, quantization",
+  },
+  {
+    id: "Agentic Workflows",
+    label: "Agentic Workflows",
+    desc: "LLM agents, tool use, planning",
+  },
+  { id: "LLMOps", label: "LLMOps", desc: "Monitoring, evals, fine-tuning" },
+  {
+    id: "Distributed Systems",
+    label: "Distributed Systems",
+    desc: "Consensus, Kafka, microservices",
+  },
+  {
+    id: "Data Engineering",
+    label: "Data Engineering",
+    desc: "Pipelines, vector DBs, lakehouses",
+  },
+  {
+    id: "Cybersecurity/Zero-Trust",
+    label: "Cybersecurity",
+    desc: "Zero-trust, eBPF, LLM security",
+  },
+  {
+    id: "GPU Optimization",
+    label: "GPU Optimization",
+    desc: "CUDA, Flash Attention, mixed precision",
+  },
+  {
+    id: "Edge Computing",
+    label: "Edge Computing",
+    desc: "Edge inference, TFLite, federated",
+  },
+  {
+    id: "MLOps",
+    label: "MLOps",
+    desc: "CI/CD, model registry, drift detection",
+  },
+];
 
 export default function Settings() {
   const navigate = useNavigate();
@@ -105,6 +134,9 @@ export default function Settings() {
   const [subFields, setSubFields] = useState([]);
   const [preferredFormats, setPreferredFormats] = useState([]);
   const [refreshInterval, setRefreshInterval] = useState(6);
+  const [taxonomyTags, setTaxonomyTags] = useState([]);
+  const [excludedTopics, setExcludedTopics] = useState([]);
+  const [explorationMode, setExplorationMode] = useState("broad");
   const [errors, setErrors] = useState({});
   const [apiError, setApiError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -122,18 +154,27 @@ export default function Settings() {
         setSubFields(u.sub_fields ?? []);
         setPreferredFormats(u.preferred_formats ?? []);
         setRefreshInterval(u.refresh_interval_hours ?? 6);
+        setTaxonomyTags(u.taxonomy_tags ?? []);
+        setExcludedTopics(u.excluded_topics ?? []);
+        setExplorationMode(u.exploration_mode ?? "broad");
       })
       .catch(() => setApiError("Could not load your profile."))
       .finally(() => setFetching(false));
   }, [userId]);
 
   function validate() {
-    const e = {};
-    if (!name.trim()) e.name = "Name is required";
-    if (!occupation.trim()) e.occupation = "Occupation is required";
-    if (!field) e.field = "Select your primary field";
-    if (subFields.length === 0) e.subFields = "Add at least one area of focus";
-    return e;
+    const result = settingsSchema.safeParse({
+      name,
+      occupation,
+      field,
+      sub_fields: subFields,
+      preferred_formats: preferredFormats,
+      refresh_interval_hours: refreshInterval,
+      taxonomy_tags: taxonomyTags,
+      excluded_topics: excludedTopics,
+      exploration_mode: explorationMode,
+    });
+    return result.success ? {} : zodErrorsToMap(result.error.issues);
   }
 
   async function handleSubmit(e) {
@@ -159,6 +200,9 @@ export default function Settings() {
           sub_fields: subFields,
           preferred_formats: preferredFormats,
           refresh_interval_hours: refreshInterval,
+          taxonomy_tags: taxonomyTags,
+          excluded_topics: excludedTopics,
+          exploration_mode: explorationMode,
         }),
       });
       if (!res.ok) {
@@ -168,7 +212,7 @@ export default function Settings() {
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (err) {
-      setApiError(err.message || "Something went wrong.");
+      setApiError(err.message || "Something went wrong. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -182,211 +226,116 @@ export default function Settings() {
   if (fetching) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="flex gap-1.5">
-          {[0, 1, 2].map((i) => (
-            <motion.div
-              key={i}
-              className="w-2 h-2 rounded-full"
-              style={{ background: "var(--color-deep-purple)" }}
-              animate={{ scale: [1, 1.6, 1], opacity: [0.4, 1, 0.4] }}
-              transition={{ repeat: Infinity, duration: 0.9, delay: i * 0.18 }}
-            />
-          ))}
-        </div>
+        <div className="w-6 h-6 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
 
   return (
-    <div
-      className="max-w-2xl mx-auto px-5 sm:px-8 py-10 font-sans"
-      style={{ color: "var(--color-text-primary)" }}
-    >
-      {/* Header */}
-      <div
-        className="mb-8 pb-6"
-        style={{ borderBottom: "1px solid rgba(90,45,160,0.25)" }}
-      >
-        <h2 className="text-2xl font-display font-bold tracking-tight uppercase">
-          Profile Settings
-        </h2>
-        <p
-          className="mt-1 text-xs font-mono tracking-widest uppercase"
-          style={{ color: "var(--color-text-secondary)" }}
-        >
-          [/] Update your context to re-tune the swarm
-        </p>
-      </div>
+    <div className="max-w-xl mx-auto px-4 sm:px-6 py-8">
+      <h2 className="text-xl font-bold text-white mb-1">Settings</h2>
+      <p className="text-sm text-slate-400 mb-8">
+        Update your profile to re-tune your feed.
+      </p>
 
-      {/* Banners */}
-      <AnimatePresence>
+      <form onSubmit={handleSubmit} noValidate className="space-y-6">
         {apiError && (
-          <motion.div
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            className="flex items-start gap-3 px-4 py-3 mb-6 rounded-lg"
-            style={{
-              background: "rgba(255,45,122,0.1)",
-              border: "1px solid rgba(255,45,122,0.25)",
-            }}
-          >
-            <span
-              className="text-sm shrink-0 mt-0.5"
-              style={{ color: "var(--color-neon-pink)" }}
+          <div className="flex items-start gap-3 bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3">
+            <svg
+              className="w-5 h-5 text-red-400 shrink-0 mt-0.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+              viewBox="0 0 24 24"
             >
-              ⚠
-            </span>
-            <p className="text-sm" style={{ color: "var(--color-neon-pink)" }}>
-              {apiError}
-            </p>
-          </motion.div>
-        )}
-        {saved && (
-          <motion.div
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            className="flex items-center gap-2 px-4 py-3 mb-6 rounded-lg"
-            style={{
-              background: "rgba(0,212,255,0.08)",
-              border: "1px solid rgba(0,212,255,0.2)",
-            }}
-          >
-            <Check
-              className="w-4 h-4 shrink-0"
-              style={{ color: "var(--color-neon-cyan)" }}
-            />
-            <p
-              className="text-sm font-medium"
-              style={{ color: "var(--color-neon-cyan)" }}
-            >
-              Profile saved — swarm is re-tuning.
-            </p>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <form onSubmit={handleSubmit} noValidate className="space-y-8">
-        {/* Identity */}
-        <div>
-          <SectionHeader label="[01] Identity" />
-          <div className="space-y-4">
-            {/* Name */}
-            <div>
-              <div className="flex justify-between mb-2">
-                <label
-                  className="text-xs font-mono font-bold uppercase tracking-widest"
-                  style={{ color: "var(--color-text-secondary)" }}
-                >
-                  Name
-                </label>
-                <span
-                  className={`text-[10px] font-mono font-bold ${name.length > MAX_NAME * 0.9 ? "" : ""}`}
-                  style={{
-                    color:
-                      name.length > MAX_NAME * 0.9
-                        ? "var(--color-neon-pink)"
-                        : "var(--color-text-secondary)",
-                  }}
-                >
-                  {name.length}/{MAX_NAME}
-                </span>
-              </div>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value.slice(0, MAX_NAME))}
-                placeholder="Ada Lovelace"
-                className="w-full px-4 py-2.5 text-sm font-sans outline-none transition-all"
-                style={{
-                  background: "rgba(13,11,24,0.6)",
-                  border: errors.name
-                    ? "1px solid var(--color-neon-pink)"
-                    : "1px solid rgba(90,45,160,0.3)",
-                  borderRadius: "0.5rem",
-                  color: "var(--color-text-primary)",
-                }}
-                onFocus={(e) =>
-                  (e.currentTarget.style.borderColor = "var(--color-neon-cyan)")
-                }
-                onBlur={(e) =>
-                  (e.currentTarget.style.borderColor = errors.name
-                    ? "var(--color-neon-pink)"
-                    : "rgba(90,45,160,0.3)")
-                }
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
               />
-              {errors.name && (
-                <p
-                  className="mt-1.5 text-[11px] font-mono"
-                  style={{ color: "var(--color-neon-pink)" }}
-                >
-                  {errors.name}
-                </p>
-              )}
-            </div>
-
-            {/* Occupation */}
-            <div>
-              <div className="flex justify-between mb-2">
-                <label
-                  className="text-xs font-mono font-bold uppercase tracking-widest"
-                  style={{ color: "var(--color-text-secondary)" }}
-                >
-                  Role / Title
-                </label>
-                <span
-                  className="text-[10px] font-mono font-bold"
-                  style={{
-                    color:
-                      occupation.length > MAX_OCC * 0.9
-                        ? "var(--color-neon-pink)"
-                        : "var(--color-text-secondary)",
-                  }}
-                >
-                  {occupation.length}/{MAX_OCC}
-                </span>
-              </div>
-              <input
-                type="text"
-                value={occupation}
-                onChange={(e) =>
-                  setOccupation(e.target.value.slice(0, MAX_OCC))
-                }
-                placeholder="Chief Systems Architect"
-                className="w-full px-4 py-2.5 text-sm font-sans outline-none transition-all"
-                style={{
-                  background: "rgba(13,11,24,0.6)",
-                  border: errors.occupation
-                    ? "1px solid var(--color-neon-pink)"
-                    : "1px solid rgba(90,45,160,0.3)",
-                  borderRadius: "0.5rem",
-                  color: "var(--color-text-primary)",
-                }}
-                onFocus={(e) =>
-                  (e.currentTarget.style.borderColor = "var(--color-neon-cyan)")
-                }
-                onBlur={(e) =>
-                  (e.currentTarget.style.borderColor = errors.occupation
-                    ? "var(--color-neon-pink)"
-                    : "rgba(90,45,160,0.3)")
-                }
-              />
-              {errors.occupation && (
-                <p
-                  className="mt-1.5 text-[11px] font-mono"
-                  style={{ color: "var(--color-neon-pink)" }}
-                >
-                  {errors.occupation}
-                </p>
-              )}
-            </div>
+            </svg>
+            <p className="text-sm text-red-300">{apiError}</p>
           </div>
+        )}
+
+        {saved && (
+          <div className="flex items-center gap-2 bg-violet-500/10 border border-violet-500/30 rounded-lg px-4 py-3">
+            <svg
+              className="w-4 h-4 text-violet-400"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2.5}
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M5 13l4 4L19 7"
+              />
+            </svg>
+            <p className="text-sm text-violet-300">
+              Profile saved successfully.
+            </p>
+          </div>
+        )}
+
+        {/* Name */}
+        <div>
+          <div className="flex justify-between mb-1.5">
+            <label className="text-sm font-medium text-slate-200">Name</label>
+            <span
+              className={`text-xs ${name.length > MAX_NAME * 0.9 ? "text-amber-400" : "text-slate-500"}`}
+            >
+              {name.length}/{MAX_NAME}
+            </span>
+          </div>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value.slice(0, MAX_NAME))}
+            className={`w-full px-3.5 py-2.5 bg-slate-800 border rounded-lg text-sm text-slate-200 placeholder-slate-500 outline-none transition-colors ${
+              errors.name
+                ? "border-red-500"
+                : "border-slate-700 focus:border-violet-500 focus:ring-1 focus:ring-violet-500/30"
+            }`}
+          />
+          {errors.name && (
+            <p className="mt-1.5 text-xs text-red-400">{errors.name}</p>
+          )}
+        </div>
+
+        {/* Occupation */}
+        <div>
+          <div className="flex justify-between mb-1.5">
+            <label className="text-sm font-medium text-slate-200">
+              Job Title / Role
+            </label>
+            <span
+              className={`text-xs ${occupation.length > MAX_OCC * 0.9 ? "text-amber-400" : "text-slate-500"}`}
+            >
+              {occupation.length}/{MAX_OCC}
+            </span>
+          </div>
+          <input
+            type="text"
+            value={occupation}
+            onChange={(e) => setOccupation(e.target.value.slice(0, MAX_OCC))}
+            className={`w-full px-3.5 py-2.5 bg-slate-800 border rounded-lg text-sm text-slate-200 placeholder-slate-500 outline-none transition-colors ${
+              errors.occupation
+                ? "border-red-500"
+                : "border-slate-700 focus:border-violet-500 focus:ring-1 focus:ring-violet-500/30"
+            }`}
+          />
+          {errors.occupation && (
+            <p className="mt-1.5 text-xs text-red-400">{errors.occupation}</p>
+          )}
         </div>
 
         {/* Primary Field */}
         <div>
-          <SectionHeader label="[02] Primary Domain" />
+          <label className="block text-sm font-medium text-slate-200 mb-1.5">
+            Primary Field
+          </label>
           <div className="flex flex-wrap gap-2">
             {FIELDS.map((f) => {
               const Icon = f.icon;
@@ -397,41 +346,30 @@ export default function Settings() {
                   type="button"
                   onClick={() => {
                     setField(f.id);
-                    setErrors((p) => ({ ...p, field: undefined }));
+                    setErrors((prev) => ({ ...prev, field: undefined }));
                   }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-all"
-                  style={{
-                    borderRadius: "9999px",
-                    border: selected
-                      ? "1px solid var(--color-neon-cyan)"
-                      : "1px solid rgba(90,45,160,0.3)",
-                    background: selected
-                      ? "rgba(0,212,255,0.1)"
-                      : "rgba(13,11,24,0.5)",
-                    color: selected
-                      ? "var(--color-neon-cyan)"
-                      : "var(--color-text-secondary)",
-                  }}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
+                    selected
+                      ? "border-violet-500 bg-violet-500/10 text-violet-300 ring-1 ring-violet-500/30"
+                      : "border-slate-700 bg-slate-800/50 text-slate-400 hover:border-slate-500 hover:text-slate-300"
+                  }`}
                 >
-                  <Icon className="w-3.5 h-3.5 shrink-0" />
+                  <Icon className="w-3.5 h-3.5" />
                   {f.label}
                 </button>
               );
             })}
           </div>
           {errors.field && (
-            <p
-              className="mt-2 text-[11px] font-mono"
-              style={{ color: "var(--color-neon-pink)" }}
-            >
-              {errors.field}
-            </p>
+            <p className="mt-2 text-xs text-red-400">{errors.field}</p>
           )}
         </div>
 
         {/* Sub-fields */}
         <div>
-          <SectionHeader label="[03] Focus Areas" />
+          <label className="block text-sm font-medium text-slate-200 mb-1.5">
+            Areas of Focus
+          </label>
           <TagInput
             tags={subFields}
             onChange={setSubFields}
@@ -441,18 +379,19 @@ export default function Settings() {
             }
           />
           {errors.subFields && (
-            <p
-              className="mt-2 text-[11px] font-mono"
-              style={{ color: "var(--color-neon-pink)" }}
-            >
-              {errors.subFields}
-            </p>
+            <p className="mt-1.5 text-xs text-red-400">{errors.subFields}</p>
           )}
         </div>
 
-        {/* Preferred Formats */}
+        {/* Media Formats */}
         <div>
-          <SectionHeader label="[04] Content Formats (optional)" />
+          <label className="block text-sm font-medium text-slate-200 mb-1">
+            Preferred Formats{" "}
+            <span className="text-slate-500 font-normal">(optional)</span>
+          </label>
+          <p className="text-xs text-slate-500 mb-3">
+            Your feed will prioritise content from these sources.
+          </p>
           <div className="grid grid-cols-2 gap-2">
             {FORMAT_CARDS.map((card) => {
               const Icon = card.icon;
@@ -468,53 +407,31 @@ export default function Settings() {
                         : [...prev, card.id],
                     )
                   }
-                  className="relative flex items-center gap-3 p-3 text-left transition-all"
-                  style={{
-                    borderRadius: "0.75rem",
-                    border: selected
-                      ? "1px solid rgba(0,212,255,0.4)"
-                      : "1px solid rgba(90,45,160,0.25)",
-                    background: selected
-                      ? "rgba(0,212,255,0.06)"
-                      : "rgba(13,11,24,0.5)",
-                  }}
+                  className={`relative flex items-center gap-3 p-3 rounded-lg border text-left transition-all ${
+                    selected
+                      ? "border-violet-500 ring-2 ring-violet-500/20 bg-violet-500/5"
+                      : "border-slate-700 bg-slate-800/50 hover:border-slate-600"
+                  }`}
                 >
                   {selected && (
-                    <div
-                      className="absolute top-2 right-2 w-4 h-4 rounded-full flex items-center justify-center"
-                      style={{ background: "var(--color-neon-cyan)" }}
-                    >
+                    <div className="absolute top-2 right-2 w-4 h-4 bg-violet-500 rounded-full flex items-center justify-center">
                       <Check
-                        className="w-2.5 h-2.5"
-                        style={{ color: "var(--color-space-black)" }}
+                        className="w-2.5 h-2.5 text-white"
                         strokeWidth={3}
                       />
                     </div>
                   )}
                   <Icon
-                    className="w-4 h-4 shrink-0"
-                    style={{
-                      color: selected
-                        ? "var(--color-neon-cyan)"
-                        : "var(--color-text-secondary)",
-                    }}
+                    className={`w-5 h-5 shrink-0 ${selected ? "text-violet-400" : "text-slate-400"}`}
                   />
                   <div>
                     <p
-                      className="text-xs font-semibold"
-                      style={{
-                        color: selected
-                          ? "var(--color-neon-cyan)"
-                          : "var(--color-text-primary)",
-                      }}
+                      className={`text-xs font-semibold ${selected ? "text-violet-300" : "text-slate-300"}`}
                     >
                       {card.label}
                     </p>
-                    <p
-                      className="text-[10px] mt-0.5"
-                      style={{ color: "var(--color-text-secondary)" }}
-                    >
-                      {card.desc}
+                    <p className="text-[10px] text-slate-500">
+                      {card.description}
                     </p>
                   </div>
                 </button>
@@ -523,105 +440,197 @@ export default function Settings() {
           </div>
         </div>
 
-        {/* Refresh Interval */}
+        {/* Topic Focus */}
         <div>
-          <SectionHeader label="[05] Refresh Cadence" />
+          <label className="block text-sm font-medium text-slate-200 mb-1">
+            Topic Focus{" "}
+            <span className="text-slate-500 font-normal">(optional)</span>
+          </label>
+          <p className="text-xs text-slate-500 mb-3">
+            Select topics to prioritise. Leave empty to receive all topics.
+          </p>
+          <div className="grid grid-cols-1 gap-2">
+            {TAXONOMY_TAGS.map((tag) => {
+              const selected = taxonomyTags.includes(tag.id);
+              return (
+                <button
+                  key={tag.id}
+                  type="button"
+                  onClick={() =>
+                    setTaxonomyTags((prev) =>
+                      prev.includes(tag.id)
+                        ? prev.filter((t) => t !== tag.id)
+                        : [...prev, tag.id],
+                    )
+                  }
+                  className={`relative flex items-center justify-between p-3 rounded-lg border text-left transition-all ${
+                    selected
+                      ? "border-violet-500 ring-1 ring-violet-500/20 bg-violet-500/5"
+                      : "border-slate-700 bg-slate-800/50 hover:border-slate-600"
+                  }`}
+                >
+                  <div>
+                    <p
+                      className={`text-xs font-semibold ${selected ? "text-violet-300" : "text-slate-300"}`}
+                    >
+                      {tag.label}
+                    </p>
+                    <p className="text-[10px] text-slate-500 mt-0.5">
+                      {tag.desc}
+                    </p>
+                  </div>
+                  {selected && (
+                    <div className="w-4 h-4 bg-violet-500 rounded-full flex items-center justify-center shrink-0">
+                      <Check
+                        className="w-2.5 h-2.5 text-white"
+                        strokeWidth={3}
+                      />
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          {taxonomyTags.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setTaxonomyTags([])}
+              className="mt-2 text-xs text-slate-500 hover:text-slate-300 transition-colors"
+            >
+              Clear selection (receive all topics)
+            </button>
+          )}
+        </div>
+
+        {/* Exploration Mode */}
+        {taxonomyTags.length > 0 && (
+          <div>
+            <label className="block text-sm font-medium text-slate-200 mb-1">
+              Exploration Mode
+            </label>
+            <p className="text-xs text-slate-500 mb-3">
+              Controls how strictly your feed filters by selected topics.
+            </p>
+            <div className="flex gap-2">
+              {[
+                {
+                  id: "narrow",
+                  label: "Narrow",
+                  hint: "Only your selected topics",
+                },
+                {
+                  id: "broad",
+                  label: "Broad",
+                  hint: "Selected topics + adjacent content",
+                },
+              ].map((mode) => (
+                <button
+                  key={mode.id}
+                  type="button"
+                  onClick={() => setExplorationMode(mode.id)}
+                  className={`flex-1 py-2.5 px-3 rounded-lg border text-sm font-semibold transition-all ${
+                    explorationMode === mode.id
+                      ? "border-violet-500 bg-violet-500/10 text-violet-300 ring-1 ring-violet-500/30"
+                      : "border-slate-700 bg-slate-800/50 text-slate-400 hover:border-slate-500 hover:text-slate-300"
+                  }`}
+                >
+                  {mode.label}
+                  <p className="text-[10px] font-normal mt-0.5 opacity-70">
+                    {mode.hint}
+                  </p>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Excluded Topics */}
+        <div>
+          <label className="block text-sm font-medium text-slate-200 mb-1">
+            Exclude Topics{" "}
+            <span className="text-slate-500 font-normal">(optional)</span>
+          </label>
+          <p className="text-xs text-slate-500 mb-3">
+            Keywords to block from your feed. Press Enter to add.
+          </p>
+          <TagInput
+            tags={excludedTopics}
+            onChange={setExcludedTopics}
+            placeholder="e.g. blockchain, web3, tutorials…"
+          />
+        </div>
+
+        {/* Feed Refresh Interval */}
+        <div>
+          <label className="block text-sm font-medium text-slate-200 mb-1">
+            Feed Refresh Interval
+          </label>
+          <p className="text-xs text-slate-500 mb-3">
+            How often your feed pulls fresh content from the pipeline.
+          </p>
           <div className="flex gap-2">
-            {[3, 6].map((hrs) => (
+            {[3, 6, 12].map((hrs) => (
               <button
                 key={hrs}
                 type="button"
                 onClick={() => setRefreshInterval(hrs)}
-                className="flex-1 py-2.5 text-sm font-mono font-bold uppercase tracking-widest transition-all"
-                style={{
-                  borderRadius: "0.5rem",
-                  border:
-                    refreshInterval === hrs
-                      ? "1px solid var(--color-deep-purple)"
-                      : "1px solid rgba(90,45,160,0.25)",
-                  background:
-                    refreshInterval === hrs
-                      ? "rgba(90,45,160,0.2)"
-                      : "rgba(13,11,24,0.5)",
-                  color:
-                    refreshInterval === hrs
-                      ? "var(--color-text-primary)"
-                      : "var(--color-text-secondary)",
-                }}
+                className={`flex-1 py-2 rounded-lg border text-sm font-semibold transition-all ${
+                  refreshInterval === hrs
+                    ? "border-violet-500 bg-violet-500/10 text-violet-300 ring-1 ring-violet-500/30"
+                    : "border-slate-700 bg-slate-800/50 text-slate-400 hover:border-slate-500 hover:text-slate-300"
+                }`}
               >
                 Every {hrs}h
               </button>
             ))}
           </div>
-          <p
-            className="mt-2 text-[10px] font-mono uppercase tracking-widest"
-            style={{ color: "var(--color-text-secondary)" }}
-          >
+          <p className="mt-1.5 text-xs text-slate-500">
             {refreshInterval === 3
-              ? "High frequency — ideal for fast-moving fields"
-              : "Standard — balanced freshness and efficiency"}
+              ? "High frequency — best for fast-moving fields"
+              : refreshInterval === 6
+                ? "Standard — balanced freshness and efficiency"
+                : "Low frequency — ideal for stable, long-form fields"}
           </p>
         </div>
 
-        {/* Actions */}
-        <div
-          className="flex items-center gap-3 pt-4"
-          style={{ borderTop: "1px solid rgba(90,45,160,0.2)" }}
-        >
+        <div className="flex items-center gap-3 pt-2">
           <button
             type="submit"
             disabled={loading}
-            className="flex-1 py-2.5 text-sm font-display font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition-all"
-            style={{
-              borderRadius: "0.5rem",
-              background: loading
-                ? "rgba(90,45,160,0.3)"
-                : "var(--color-deep-purple)",
-              color: "var(--color-text-primary)",
-              opacity: loading ? 0.6 : 1,
-              cursor: loading ? "not-allowed" : "pointer",
-            }}
+            className="flex-1 py-2.5 bg-violet-600 hover:bg-violet-500 disabled:bg-violet-800 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-colors flex items-center justify-center gap-2"
           >
             {loading ? (
               <>
-                <motion.div
-                  animate={{ rotate: 360 }}
-                  transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                  className="w-4 h-4 rounded-full border-2 border-t-transparent"
-                  style={{
-                    borderColor: "rgba(240,238,255,0.4)",
-                    borderTopColor: "transparent",
-                  }}
-                />
+                <svg
+                  className="animate-spin w-4 h-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                  />
+                </svg>
                 Saving…
               </>
             ) : (
-              <>
-                <Save className="w-4 h-4" />
-                Save Changes
-              </>
+              "Save Changes"
             )}
           </button>
           <button
             type="button"
             onClick={handleLogout}
-            className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-all"
-            style={{
-              borderRadius: "0.5rem",
-              border: "1px solid rgba(255,45,122,0.25)",
-              background: "rgba(255,45,122,0.06)",
-              color: "var(--color-text-secondary)",
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.color = "var(--color-neon-pink)";
-              e.currentTarget.style.borderColor = "rgba(255,45,122,0.5)";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.color = "var(--color-text-secondary)";
-              e.currentTarget.style.borderColor = "rgba(255,45,122,0.25)";
-            }}
+            className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-sm font-medium rounded-lg transition-colors"
           >
-            <LogOut className="w-4 h-4" />
             Sign out
           </button>
         </div>

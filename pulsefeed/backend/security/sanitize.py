@@ -1,21 +1,59 @@
 """
 Prompt injection sanitizer for LLM-bound user inputs.
 
-Strips known injection patterns, model-specific control tokens, null bytes,
-and excessive whitespace from strings before they reach Gemini or the
-vector-DB query layer.
+Three-stage pipeline, applied in order:
+  1. HTML  — decode entities (html.unescape) then strip all tags via regex.
+             Prevents XSS if content is ever reflected to the frontend and
+             catches encoded variants like &lt;script&gt;.
+  2. Markdown — strip formatting syntax that can wrap injection payloads
+             (images, links, headings, blockquotes, emphasis, HR rules).
+             Visible link text is preserved; image markup is dropped entirely.
+  3. Injection — strip LLM control tokens, instruction-override phrases,
+             role-prefix patterns, null bytes, and excess whitespace.
+             (Unchanged from the original implementation.)
 
-Design: strip-only, never raise.  Suspicious content is replaced with a
-space and a WARNING is emitted (field name only — never the raw value).
+Design: strip-only, never raise.  If content is modified a WARNING is emitted
+with the field name only — the raw value is never logged.
 """
+import html
 import logging
 import re
 
 logger = logging.getLogger(__name__)
 
-# Instruction-override attempts ------------------------------------------------
-# Uses (?:...\s+){0,3} to handle multi-qualifier phrases like
-# "ignore all previous instructions" (two qualifiers before "instructions").
+# ---------------------------------------------------------------------------
+# Stage 1: HTML
+# ---------------------------------------------------------------------------
+
+# Match any HTML tag up to 2000 chars (incl. attributes); DOTALL for newlines
+_HTML_TAG_RE = re.compile(r"<[^>]{0,2000}>", re.DOTALL)
+
+# ---------------------------------------------------------------------------
+# Stage 2: Markdown formatting
+# ---------------------------------------------------------------------------
+
+# Images: ![alt](url) → remove entirely (URL is the injection surface)
+_MD_IMAGE_RE = re.compile(r"!\[[^\]]{0,500}\]\([^\)]{0,2000}\)")
+
+# Links: [text](url) → keep visible text only
+_MD_LINK_RE = re.compile(r"\[([^\]]{0,500})\]\([^\)]{0,2000}\)")
+
+# Headings at line start: # … → strip the hashes
+_MD_HEADING_RE = re.compile(r"(?im)^#{1,6}\s+")
+
+# Blockquotes at line start: > … → strip the marker
+_MD_BLOCKQUOTE_RE = re.compile(r"(?im)^>\s*")
+
+# Horizontal rules on their own line
+_MD_HR_RE = re.compile(r"(?m)^(---|\*\*\*|___)\s*$")
+
+# Emphasis / inline-code delimiters: **, __, *, _, `, ```
+_MD_EMPHASIS_RE = re.compile(r"(\*{1,3}|_{1,3}|`{1,3})")
+
+# ---------------------------------------------------------------------------
+# Stage 3: Injection patterns
+# ---------------------------------------------------------------------------
+
 _OVERRIDE_RE = re.compile(
     r"(?i)"
     r"(ignore\s+(?:(?:all|previous|prior|above)\s+){0,3}instructions?)"
@@ -27,12 +65,10 @@ _OVERRIDE_RE = re.compile(
     r"|(print\s+(your\s+)?(system\s+)?prompt)",
 )
 
-# Role/context injection at line start (MULTILINE so ^ matches each line) ------
 _ROLE_PREFIX_RE = re.compile(
     r"(?im)^\s*(system|assistant|user|human)\s*:",
 )
 
-# LLM-family special tokens ----------------------------------------------------
 _SPECIAL_TOKEN_RE = re.compile(
     r"(<\|im_start\|>|<\|im_end\|>|<\|endoftext\|>)"
     r"|(\[INST\]|\[\/INST\]|<<SYS>>|<\/SYS>>|<\/s>(?!\w))"
@@ -40,21 +76,33 @@ _SPECIAL_TOKEN_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Null bytes and non-printable C0 control characters (keep \t and \n) ----------
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
-# Collapse 3+ consecutive newlines to 2 ----------------------------------------
 _EXCESS_NEWLINES_RE = re.compile(r"\n{3,}")
 
 
 def sanitize_llm_input(value: str, field_name: str = "field") -> str:
     """
-    Return *value* with injection patterns and control characters removed.
+    Return *value* with HTML, Markdown, injection patterns, and control
+    characters removed.
 
     Never raises.  If content was modified, a WARNING is logged with the
     *field_name* only (the raw value is never included in the log line).
     """
-    cleaned = _CONTROL_RE.sub("", value)
+    # Stage 1: HTML
+    cleaned = html.unescape(value)       # &lt; → <, &amp; → &, &#x27; → '…
+    cleaned = _HTML_TAG_RE.sub("", cleaned)
+
+    # Stage 2: Markdown formatting
+    cleaned = _MD_IMAGE_RE.sub("", cleaned)
+    cleaned = _MD_LINK_RE.sub(r"\1", cleaned)
+    cleaned = _MD_HR_RE.sub("", cleaned)
+    cleaned = _MD_HEADING_RE.sub("", cleaned)
+    cleaned = _MD_BLOCKQUOTE_RE.sub("", cleaned)
+    cleaned = _MD_EMPHASIS_RE.sub("", cleaned)
+
+    # Stage 3: Injection patterns
+    cleaned = _CONTROL_RE.sub("", cleaned)
     cleaned = _ROLE_PREFIX_RE.sub(" ", cleaned)
     cleaned = _OVERRIDE_RE.sub(" ", cleaned)
     cleaned = _SPECIAL_TOKEN_RE.sub(" ", cleaned)
@@ -63,7 +111,7 @@ def sanitize_llm_input(value: str, field_name: str = "field") -> str:
 
     if cleaned != value.strip():
         logger.warning(
-            "Prompt injection pattern detected and stripped in field '%s'",
+            "Input sanitized in field '%s' — HTML/Markdown/injection content stripped",
             field_name,
         )
 

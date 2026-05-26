@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -10,6 +11,7 @@ from auth import get_current_user_id
 from database import get_db
 from models import Event, User
 from schemas import EventRead
+from security.rate_limiter import refresh_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -102,11 +104,14 @@ async def get_events(
         .order_by(Event.fetched_at.desc())
         .all()
     )
+    if user_id not in _generating:
+        _generating.add(user_id)
+        background_tasks.add_task(_background_refresh_events, user_id)
     response.headers["X-Events-Generating"] = "true"
     return existing
 
 
-@router.post("/{user_id}/refresh", response_model=list[EventRead])
+@router.post("/{user_id}/refresh", response_model=list[EventRead], dependencies=[Depends(refresh_rate_limit)])
 async def refresh_events(
     user_id: int,
     current_user_id: int = Depends(get_current_user_id),
@@ -118,13 +123,55 @@ async def refresh_events(
         raise HTTPException(status_code=404, detail="User not found")
     _check_cooldown(user_id)
     _last_refresh[user_id] = time.monotonic()
-    logger.info("Generator pool supplies events — returning cached for user %d", user_id)
-    return (
-        db.query(Event)
-        .filter(Event.user_id == user_id)
-        .order_by(Event.fetched_at.desc())
-        .all()
-    )
+    return await _refresh_events(user_id, db)
+
+
+_GENERATION_TIMEOUT = 300  # seconds
+
+
+async def _background_refresh_events(user_id: int) -> None:
+    from agents.feed_personalizer import personalize_events
+    from database import engine
+    from sqlalchemy.orm import Session as SASession
+
+    db = SASession(engine)
+    try:
+        events = await asyncio.wait_for(
+            personalize_events(user_id, db), timeout=_GENERATION_TIMEOUT
+        )
+        if not events:
+            return
+        db.query(Event).filter(Event.user_id == user_id).delete()
+        _save_events(events, db)
+        logger.info("Background events refresh done for user %d: %d events", user_id, len(events))
+    except asyncio.TimeoutError:
+        logger.error("Events refresh timed out for user %d", user_id)
+    except Exception as exc:
+        logger.error("Background events refresh failed for user %d: %s", user_id, exc, exc_info=True)
+    finally:
+        db.close()
+        _generating.discard(user_id)
+
+
+async def _refresh_events(user_id: int, db: Session) -> list[Event]:
+    from agents.feed_personalizer import personalize_events
+
+    try:
+        events = await asyncio.wait_for(
+            personalize_events(user_id, db), timeout=_GENERATION_TIMEOUT
+        )
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="Events generation timed out") from exc
+    except Exception as exc:
+        logger.error("personalize_events failed for user %d: %s", user_id, exc, exc_info=True)
+        raise HTTPException(status_code=502, detail="Events generation failed") from exc
+
+    if not events:
+        return db.query(Event).filter(Event.user_id == user_id).order_by(Event.fetched_at.desc()).all()
+
+    db.query(Event).filter(Event.user_id == user_id).delete()
+    _save_events(events, db)
+    return db.query(Event).filter(Event.user_id == user_id).order_by(Event.fetched_at.desc()).all()
 
 
 @router.patch("/items/{item_id}/like", response_model=EventRead)

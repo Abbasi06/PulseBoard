@@ -4,6 +4,18 @@ from pydantic import BaseModel, Field, field_validator
 
 from security.sanitize import sanitize_llm_input
 
+VALID_TAXONOMY_TAGS: frozenset[str] = frozenset([
+    "AI Engineering",
+    "Agentic Workflows",
+    "LLMOps",
+    "Distributed Systems",
+    "Data Engineering",
+    "Cybersecurity/Zero-Trust",
+    "GPU Optimization",
+    "Edge Computing",
+    "MLOps",
+])
+
 
 class UserCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
@@ -12,17 +24,25 @@ class UserCreate(BaseModel):
     field: str = Field(default="", max_length=100)
     sub_fields: list[str] = Field(default_factory=list, max_length=10)
     refresh_interval_hours: int = Field(default=6)
+    taxonomy_tags: list[str] = Field(default_factory=list)
+    excluded_topics: list[str] = Field(default_factory=list)
+    exploration_mode: str = Field(default="broad")
 
     @field_validator("refresh_interval_hours")
     @classmethod
     def validate_refresh_interval(cls, v: int) -> int:
-        if v not in (3, 6):
-            raise ValueError("refresh_interval_hours must be 3 or 6")
+        if v not in (3, 6, 12):
+            raise ValueError("refresh_interval_hours must be 3, 6, or 12")
         return v
 
-    @field_validator("name", "occupation", mode="before")
+    @field_validator("name", mode="before")
     @classmethod
-    def strip_str(cls, v: str) -> str:
+    def strip_name(cls, v: str) -> str:
+        return sanitize_llm_input(v.strip(), field_name="name")
+
+    @field_validator("occupation", mode="before")
+    @classmethod
+    def strip_occupation(cls, v: str) -> str:
         return sanitize_llm_input(v.strip(), field_name="occupation")
 
     @field_validator("field", mode="before")
@@ -69,6 +89,35 @@ class UserCreate(BaseModel):
             raise ValueError("can select a maximum of 5 chips")
         return v
 
+    @field_validator("taxonomy_tags", mode="before")
+    @classmethod
+    def clean_taxonomy_tags(cls, v: list[str]) -> list[str]:
+        if not isinstance(v, list):
+            return []
+        return [t for t in v if t in VALID_TAXONOMY_TAGS]
+
+    @field_validator("excluded_topics", mode="before")
+    @classmethod
+    def clean_excluded_topics(cls, v: list[str]) -> list[str]:
+        if not isinstance(v, list):
+            return []
+        seen: set[str] = set()
+        result: list[str] = []
+        for topic in v:
+            topic = sanitize_llm_input(topic.strip()[:50], field_name="excluded_topics")
+            lower = topic.lower()
+            if topic and lower not in seen:
+                seen.add(lower)
+                result.append(topic)
+        return result[:20]
+
+    @field_validator("exploration_mode")
+    @classmethod
+    def validate_exploration_mode(cls, v: str) -> str:
+        if v not in ("narrow", "broad"):
+            raise ValueError("exploration_mode must be 'narrow' or 'broad'")
+        return v
+
 
 class UserUpdate(BaseModel):
     """Schema for PUT /users/{id} — selected_chips is optional (preserved if omitted)."""
@@ -80,17 +129,25 @@ class UserUpdate(BaseModel):
     sub_fields: list[str] = Field(default_factory=list, max_length=10)
     preferred_formats: list[str] = Field(default_factory=list)
     refresh_interval_hours: int = Field(default=6)
+    taxonomy_tags: list[str] = Field(default_factory=list)
+    excluded_topics: list[str] = Field(default_factory=list)
+    exploration_mode: str = Field(default="broad")
 
     @field_validator("refresh_interval_hours")
     @classmethod
     def validate_refresh_interval(cls, v: int) -> int:
-        if v not in (3, 6):
-            raise ValueError("refresh_interval_hours must be 3 or 6")
+        if v not in (3, 6, 12):
+            raise ValueError("refresh_interval_hours must be 3, 6, or 12")
         return v
 
-    @field_validator("name", "occupation", mode="before")
+    @field_validator("name", mode="before")
     @classmethod
-    def strip_str(cls, v: str) -> str:
+    def strip_name(cls, v: str) -> str:
+        return sanitize_llm_input(v.strip(), field_name="name")
+
+    @field_validator("occupation", mode="before")
+    @classmethod
+    def strip_occupation(cls, v: str) -> str:
         return sanitize_llm_input(v.strip(), field_name="occupation")
 
     @field_validator("field", mode="before")
@@ -141,6 +198,35 @@ class UserUpdate(BaseModel):
             raise ValueError("can select a maximum of 5 chips")
         return v
 
+    @field_validator("taxonomy_tags", mode="before")
+    @classmethod
+    def clean_taxonomy_tags(cls, v: list[str]) -> list[str]:
+        if not isinstance(v, list):
+            return []
+        return [t for t in v if t in VALID_TAXONOMY_TAGS]
+
+    @field_validator("excluded_topics", mode="before")
+    @classmethod
+    def clean_excluded_topics(cls, v: list[str]) -> list[str]:
+        if not isinstance(v, list):
+            return []
+        seen: set[str] = set()
+        result: list[str] = []
+        for topic in v:
+            topic = sanitize_llm_input(topic.strip()[:50], field_name="excluded_topics")
+            lower = topic.lower()
+            if topic and lower not in seen:
+                seen.add(lower)
+                result.append(topic)
+        return result[:20]
+
+    @field_validator("exploration_mode")
+    @classmethod
+    def validate_exploration_mode(cls, v: str) -> str:
+        if v not in ("narrow", "broad"):
+            raise ValueError("exploration_mode must be 'narrow' or 'broad'")
+        return v
+
 
 class UserRead(BaseModel):
     model_config = {"from_attributes": True}
@@ -153,6 +239,9 @@ class UserRead(BaseModel):
     sub_fields: list[str]
     preferred_formats: list[str]
     refresh_interval_hours: int
+    taxonomy_tags: list[str]
+    excluded_topics: list[str]
+    exploration_mode: str
 
 
 class FeedRead(BaseModel):

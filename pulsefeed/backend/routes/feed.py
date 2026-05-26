@@ -11,7 +11,7 @@ from auth import get_current_user_id
 from database import get_db
 from models import FeedBrief, FeedItem, User
 from schemas import BriefRead, FeedRead
-from security.rate_limiter import feed_rate_limit
+from security.rate_limiter import feed_rate_limit, refresh_rate_limit, telemetry_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +115,7 @@ async def get_feed(
     return existing
 
 
-@router.post("/{user_id}/refresh", response_model=list[FeedRead])
+@router.post("/{user_id}/refresh", response_model=list[FeedRead], dependencies=[Depends(refresh_rate_limit)])
 async def refresh_feed(
     user_id: int,
     current_user_id: int = Depends(get_current_user_id),
@@ -126,8 +126,8 @@ async def refresh_feed(
     if db.get(User, user_id) is None:
         raise HTTPException(status_code=404, detail="User not found")
     _check_cooldown(user_id)
-    result = await _refresh_feed(user_id, db)
     _last_refresh[user_id] = time.monotonic()
+    result = await _refresh_feed(user_id, db)
     return result
 
 
@@ -209,7 +209,7 @@ def toggle_save(
     return item
 
 
-@router.post("/items/{item_id}/click", response_model=FeedRead)
+@router.post("/items/{item_id}/click", response_model=FeedRead, dependencies=[Depends(telemetry_rate_limit)])
 def record_click(
     item_id: int,
     current_user_id: int = Depends(get_current_user_id),

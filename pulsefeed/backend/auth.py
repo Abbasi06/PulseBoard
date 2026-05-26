@@ -2,25 +2,44 @@
 JWT helpers for PulseFeed.
 
 Token is stored in an httpOnly cookie named `access_token`.
-SameSite=Lax allows same-host cross-port requests (localhost:5173 → localhost:8000)
-without requiring HTTPS in development.
+
+SameSite policy — controlled by COOKIE_SAMESITE env var:
+  dev  (default) COOKIE_SAMESITE=lax
+       Allows same-host cross-port (localhost:5173 → localhost:8000)
+       without HTTPS.
+  prod           COOKIE_SAMESITE=none + COOKIE_SECURE=true
+       Required when the Vercel frontend POSTs to the VPS API across
+       origins.  SameSite=Lax silently drops cookies on cross-site
+       POST/PUT/DELETE, breaking auth entirely in production.
 """
 
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Cookie, HTTPException
 from jose import JWTError, jwt
 
+logger = logging.getLogger(__name__)
+
 SECRET_KEY: str = os.environ.get("SECRET_KEY", "dev-secret-change-before-production")
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_DAYS = 30
 
+_samesite: str = os.environ.get("COOKIE_SAMESITE", "lax").lower()
+_secure: bool = os.environ.get("COOKIE_SECURE", "false").lower() == "true"
+
+if _samesite == "none" and not _secure:
+    logger.warning(
+        "COOKIE_SAMESITE=none requires COOKIE_SECURE=true — "
+        "browsers will reject the auth cookie in production"
+    )
+
 COOKIE_OPTS: dict = dict(
     key="access_token",
     httponly=True,
-    samesite="lax",
-    secure=os.environ.get("COOKIE_SECURE", "false").lower() == "true",
+    samesite=_samesite,
+    secure=_secure,
     path="/",
     max_age=TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
 )
